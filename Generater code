@@ -40,7 +40,7 @@ class SequencerApp:
         # Create GUI elements
         self.create_gui_elements()
         self.load_sounds()
-        
+
         # Audio thread control
         self.audio_thread = None
         self.stop_thread = threading.Event()
@@ -123,6 +123,15 @@ class SequencerApp:
             self.sounds["hihat"]
         ]
 
+    def load_background(self):
+        """Load the background image and scale it to fit the window."""
+        try:
+            bg = pygame.image.load("images/halloween_bg.jpg").convert()
+            self.background = pygame.transform.scale(bg, (WINDOW_WIDTH, WINDOW_HEIGHT))
+        except Exception as e:
+            print("Warning: could not load background image:", e)
+            self.background = None
+    
     def handle_event(self, event):
         """Processes user input events."""
         if event.type == pygame.USEREVENT:
@@ -242,7 +251,8 @@ def main():
 
     ui_manager = pygame_gui.UIManager((WINDOW_WIDTH, WINDOW_HEIGHT))
     app = SequencerApp(ui_manager)
-
+    app.load_background()
+    
     is_running = True
     while is_running:
         time_delta = clock.tick(60) / 1000.0
@@ -257,7 +267,11 @@ def main():
         ui_manager.update(time_delta)
         app.update_gui()
 
-        screen.fill(WHITE)
+        if app.background:
+            screen.blit(app.background, (0, 0))
+        else:
+            screen.fill(WHITE)
+
         ui_manager.draw_ui(screen)
         pygame.display.update()
 
@@ -266,3 +280,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
