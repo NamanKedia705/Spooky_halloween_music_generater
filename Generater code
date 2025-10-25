@@ -75,9 +75,11 @@ class SequencerApp:
             )
             
         # Tempo slider
+        # Tempo label
         label_rect = pygame.Rect(10, 300, 80, 20)
         pygame_gui.elements.UILabel(relative_rect=label_rect, text="Tempo:", manager=self.manager)
-        
+
+        # Tempo slider
         slider_rect = pygame.Rect(100, 300, 200, 20)
         self.tempo_slider = pygame_gui.elements.UIHorizontalSlider(
             relative_rect=slider_rect,
@@ -85,6 +87,14 @@ class SequencerApp:
             value_range=(60, 240),
             manager=self.manager
         )
+
+        # Tempo text input (right next to slider)
+        tempo_input_rect = pygame.Rect(320, 300, 60, 25)
+        self.tempo_input = pygame_gui.elements.UITextEntryLine(
+            relative_rect=tempo_input_rect,
+            manager=self.manager
+        )
+        self.tempo_input.set_text(str(self.tempo_bpm))
 
         # Play/Stop buttons
         play_button_rect = pygame.Rect(10, 350, 100, 40)
@@ -219,14 +229,32 @@ class SequencerApp:
         print("Stopped spooky melody")
 
     def update_gui(self):
-        #"""Updates the GUI, including button colors and tempo."""
-        self.tempo_bpm = int(self.tempo_slider.get_current_value())
+        """Updates tempo and visuals."""
+        # --- TEMPO LOGIC ---
 
+        # Detect if user is typing (box is focused)
+        if self.tempo_input.is_focused:
+            try:
+                # Try to parse the typed number
+                typed_value = int(self.tempo_input.get_text())
+                if 60 <= typed_value <= 240:
+                    self.tempo_bpm = typed_value
+                    self.tempo_slider.set_current_value(self.tempo_bpm)
+            except ValueError:
+                # Ignore invalid text while typing
+                pass
+        else:
+            # If not typing, follow the slider value
+            slider_value = int(self.tempo_slider.get_current_value())
+            if slider_value != self.tempo_bpm:
+                self.tempo_bpm = slider_value
+                self.tempo_input.set_text(str(self.tempo_bpm))
+
+        # --- BUTTON COLORS ---
         for i in range(3):
             for j in range(8):
                 button = self.beat_buttons[i][j]
-                
-                # Determine color for the current button
+
                 if self.is_playing and j == self.current_step:
                     color = BEAT_HIGHLIGHT_COLOR
                 elif self.beat_matrix[i][j]:
@@ -234,13 +262,12 @@ class SequencerApp:
                 else:
                     color = BEAT_COLOR
 
-                # Update button colours (pygame.Color required)
                 if button.colours['normal_bg'] != color:
                     button.colours['normal_bg'] = color
                     button.colours['hovered_bg'] = color
                     button.colours['active_bg'] = color
                     button.rebuild()
-
+    
 def main():
     """Main function to run the application."""
     pygame.init()
@@ -260,8 +287,11 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 is_running = False
-            
+
+            # process events *first* so text boxes & sliders work
             ui_manager.process_events(event)
+    
+            # then handle custom app logic
             app.handle_event(event)
         
         ui_manager.update(time_delta)
@@ -280,4 +310,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
