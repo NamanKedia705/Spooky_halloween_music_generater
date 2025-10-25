@@ -3,7 +3,6 @@ import pygame_gui
 import random
 import threading
 import time
-
 # --- Constants ---
 WINDOW_WIDTH = 800
 WINDOW_HEIGHT = 600
@@ -12,7 +11,6 @@ BLACK = pygame.Color(0, 0, 0)
 BEAT_COLOR = pygame.Color(50, 50, 50)
 BEAT_SELECTED_COLOR = pygame.Color(255, 0, 0)
 BEAT_HIGHLIGHT_COLOR = pygame.Color(150, 100, 100, 200)
-
 # --- Sound loading function ---
 def load_sound(filename):
     """Load a sound file, or return a 'fake' sound object if it fails."""
@@ -24,27 +22,24 @@ def load_sound(filename):
             def play(self): pass
         sound = DummySound()
     return sound
-
 # --- Main application class ---
 class SequencerApp:
     def __init__(self, manager):
         self.manager = manager
-        
         # Sequencer data: 3 instruments, 8 steps
         self.beat_matrix = [[False for _ in range(8)] for _ in range(3)]
         self.instrument_names = ["Bass Drum", "Snare", "Hi-Hat"]
         self.current_step = -1
         self.is_playing = False
         self.tempo_bpm = 120
-
+        self.halloween_playing = False
+        self.stop_halloween_event = threading.Event()
         # Create GUI elements
         self.create_gui_elements()
         self.load_sounds()
-
         # Audio thread control
         self.audio_thread = None
         self.stop_thread = threading.Event()
-
     def create_gui_elements(self):
         """Build the user interface."""
         # Step sequencer grid
@@ -64,7 +59,6 @@ class SequencerApp:
                 button.step_index = j
                 row_buttons.append(button)
             self.beat_buttons.append(row_buttons)
-
         # Instrument labels
         for i, name in enumerate(self.instrument_names):
             label_rect = pygame.Rect(10, 100 + i * 50, 80, 40)
@@ -73,12 +67,10 @@ class SequencerApp:
                 text=name,
                 manager=self.manager
             )
-            
         # Tempo slider
         # Tempo label
         label_rect = pygame.Rect(10, 300, 80, 20)
         pygame_gui.elements.UILabel(relative_rect=label_rect, text="Tempo:", manager=self.manager)
-
         # Tempo slider
         slider_rect = pygame.Rect(100, 300, 200, 20)
         self.tempo_slider = pygame_gui.elements.UIHorizontalSlider(
@@ -87,7 +79,6 @@ class SequencerApp:
             value_range=(60, 240),
             manager=self.manager
         )
-
         # Tempo text input (right next to slider)
         tempo_input_rect = pygame.Rect(320, 300, 60, 25)
         self.tempo_input = pygame_gui.elements.UITextEntryLine(
@@ -95,7 +86,6 @@ class SequencerApp:
             manager=self.manager
         )
         self.tempo_input.set_text(str(self.tempo_bpm))
-
         # Play/Stop buttons
         play_button_rect = pygame.Rect(10, 350, 100, 40)
         self.play_button = pygame_gui.elements.UIButton(
@@ -103,14 +93,18 @@ class SequencerApp:
             text="Play",
             manager=self.manager
         )
-        
         stop_button_rect = pygame.Rect(120, 350, 100, 40)
         self.stop_button = pygame_gui.elements.UIButton(
             relative_rect=stop_button_rect,
             text="Stop",
             manager=self.manager
         )
-
+        stop_halloween_rect = pygame.Rect(240, 350, 150, 40)
+        self.stop_halloween_button = pygame_gui.elements.UIButton(
+            relative_rect=stop_halloween_rect,
+            text="Stop Halloween Track",
+            manager=self.manager
+        )
         # Convert to song button
         convert_button_rect = pygame.Rect(10, 450, 210, 40)
         self.convert_button = pygame_gui.elements.UIButton(
@@ -118,7 +112,6 @@ class SequencerApp:
             text="Convert to Halloween Song",
             manager=self.manager
         )
-
     def load_sounds(self):
         """Loads sound effects into memory."""
         self.sounds = {
@@ -132,7 +125,6 @@ class SequencerApp:
             self.sounds["snare"],
             self.sounds["hihat"]
         ]
-
     def load_background(self):
         """Load the background image and scale it to fit the window."""
         try:
@@ -141,7 +133,6 @@ class SequencerApp:
         except Exception as e:
             print("Warning: could not load background image:", e)
             self.background = None
-    
     def handle_event(self, event):
         """Processes user input events."""
         if event.type == pygame.USEREVENT:
@@ -159,7 +150,13 @@ class SequencerApp:
                 elif event.ui_element == self.convert_button:
                     self.stop_playback()
                     self.convert_to_halloween_song()
-        
+                elif event.ui_element == self.stop_halloween_button:
+                    # Stop the Halloween track
+                    print("Stopping Halloween track...")
+                    self.stop_halloween_event.set()     # signal to stop the Halloween thread
+                    self.stop_spooky_background()       # stop spooky melody
+                    self.halloween_playing = False
+                    self.current_step = -1
     def start_playback(self):
         """Starts the audio playback loop in a separate thread."""
         if not self.is_playing:
@@ -167,7 +164,6 @@ class SequencerApp:
             self.stop_thread.clear()
             self.audio_thread = threading.Thread(target=self.playback_loop)
             self.audio_thread.start()
-
     def stop_playback(self):
         """Stops the audio playback loop."""
         if self.is_playing:
@@ -176,62 +172,55 @@ class SequencerApp:
             if self.audio_thread:
                 self.audio_thread.join()
             self.current_step = -1
-
     def playback_loop(self):
-        """Loop that plays the beat based on tempo."""
         while not self.stop_thread.is_set():
             self.current_step = (self.current_step + 1) % 8
-            
             for i in range(3):
                 if self.beat_matrix[i][self.current_step]:
                     self.instrument_sounds[i].play()
-            
-            # Calculate and wait for the time of one beat step
-            time_per_step = 60.0 / self.tempo_bpm / 2 # 8 steps = 2 bars of 4 beats
-            time.sleep(time_per_step)
-
+            # Sleep but can be interrupted
+            if self.stop_thread.wait(timeout=60.0 / self.tempo_bpm / 2):
+                break
     def convert_to_halloween_song(self):
-        """Creates and plays a Halloween-themed song from the user's beat."""
+        """Start the Halloween song in a new thread."""
+        if self.halloween_playing:
+            return  # Already playing
+        self.halloween_playing = True
+        self.stop_halloween_event.clear()
+        threading.Thread(target=self._halloween_song_loop, daemon=True).start()
+    def _halloween_song_loop(self):
+        """Actual Halloween song loop."""
         print("Mixing your beat with spooky sounds...")
-
-        # Start the spooky melody in the background
-        spooky_thread = threading.Thread(target=self.play_spooky_background)
-        spooky_thread.daemon = True  # Ensures it stops when the main program stops
-        spooky_thread.start()
-
-        # Timing for each step (based on the current tempo)
-        time_per_step = 60.0 / self.tempo_bpm / 2  # Calculate the time per step based on the tempo
-
-        # Play the sequencer beats in a loop while the spooky melody continues
+        self.play_spooky_background()
         total_steps = 8
-        for _ in range(16):  # Repeat 4 times (or as needed to create a full loop)
+        for _ in range(16):  # Repeat 16 steps
+            if self.stop_halloween_event.is_set():
+                break
             for step in range(total_steps):
-                # Play the beat sounds based on user input (beat matrix)
-                for instr in range(3):  # Loop through the 3 instruments
+                if self.stop_halloween_event.is_set():
+                    break
+                for instr in range(3):
                     if self.beat_matrix[instr][step]:
                         self.instrument_sounds[instr].play()
-
-                # Wait for the next step (to keep the beats in sync with the tempo)
-                time.sleep(time_per_step)
-
-        # After the loop is done, stop the spooky background music
+                # Sleep based on tempo, but can wake early if stop pressed
+                if self.stop_halloween_event.wait(timeout=60.0 / self.tempo_bpm / 2):
+                    break  # Stop was pressed
         self.stop_spooky_background()
-        print("Halloween song completed!")
-
+        time.sleep(0.1)  # short delay to prevent abrupt cutoff
+        self.halloween_playing = False
+        self.current_step = -1
+        print("Halloween song completed or stopped.")
     def play_spooky_background(self):
         """Play the spooky melody in the background throughout the song."""
         print("Starting spooky melody...")
         self.sounds["spooky_melody"].play(loops=-1, maxtime=0)  # Play infinitely (looping)
-
     def stop_spooky_background(self):
         """Stop the spooky melody after the song is done."""
         self.sounds["spooky_melody"].stop()
         print("Stopped spooky melody")
-
     def update_gui(self):
         """Updates tempo and visuals."""
         # --- TEMPO LOGIC ---
-
         # Detect if user is typing (box is focused)
         if self.tempo_input.is_focused:
             try:
@@ -249,25 +238,21 @@ class SequencerApp:
             if slider_value != self.tempo_bpm:
                 self.tempo_bpm = slider_value
                 self.tempo_input.set_text(str(self.tempo_bpm))
-
         # --- BUTTON COLORS ---
         for i in range(3):
             for j in range(8):
                 button = self.beat_buttons[i][j]
-
                 if self.is_playing and j == self.current_step:
                     color = BEAT_HIGHLIGHT_COLOR
                 elif self.beat_matrix[i][j]:
                     color = BEAT_SELECTED_COLOR
                 else:
                     color = BEAT_COLOR
-
                 if button.colours['normal_bg'] != color:
                     button.colours['normal_bg'] = color
                     button.colours['hovered_bg'] = color
                     button.colours['active_bg'] = color
                     button.rebuild()
-    
 def main():
     """Main function to run the application."""
     pygame.init()
