@@ -126,6 +126,14 @@ class SequencerApp:
             text="Convert to Halloween Song",
             manager=self.manager
         )
+                
+        # Randomize Beat button
+        randomize_button_rect = pygame.Rect(230, 350, 160, 40)
+        self.randomize_button = pygame_gui.elements.UIButton(
+            relative_rect=randomize_button_rect,
+            text="Randomize Beat",
+            manager=self.manager
+        )
 
     def load_sounds(self):
         """Loads sound effects into memory."""
@@ -133,7 +141,11 @@ class SequencerApp:
             "bass": load_sound("sounds/bass.wav"),
             "snare": load_sound("sounds/snare.wav"),
             "hihat": load_sound("sounds/hihat.wav"),
-            "spooky_melody": load_sound("sounds/spooky_melody.wav")
+            "spooky_melodies": [
+                load_sound("sounds/spooky1.wav"),
+                load_sound("sounds/spooky2.wav"),
+                load_sound("sounds/spooky3.wav")
+             ]
         }
         self.instrument_sounds = [
             self.sounds["bass"],
@@ -174,6 +186,8 @@ class SequencerApp:
                     self.stop_spooky_background()       # stop spooky melody
                     self.halloween_playing = False
                     self.current_step = -1
+                elif event.ui_element == self.randomize_button:
+                    self.randomize_beat()
 
     def start_playback(self):
         """Starts the audio playback loop in a separate thread."""
@@ -182,6 +196,15 @@ class SequencerApp:
             self.stop_thread.clear()
             self.audio_thread = threading.Thread(target=self.playback_loop)
             self.audio_thread.start()
+            
+    def randomize_beat(self):
+        """Randomly fills the beat grid with drum hits."""
+        for i in range(3):  # 3 instruments
+            for j in range(8):  # 8 steps
+                # Randomly decide if a beat should be on (True) or off (False)
+                self.beat_matrix[i][j] = random.choice([True, False])
+
+        print("Random drum pattern generated!")
 
     def stop_playback(self):
         """Stops the audio playback loop."""
@@ -239,14 +262,16 @@ class SequencerApp:
         print("Halloween song completed or stopped.")
 
     def play_spooky_background(self):
-        """Play the spooky melody in the background throughout the song."""
-        print("Starting spooky melody...")
-        self.sounds["spooky_melody"].play(loops=-1, maxtime=0)  # Play infinitely (looping)
+        """Play a random spooky melody in the background."""
+        self.current_spooky = random.choice(self.sounds["spooky_melodies"])
+        print("Playing spooky melody:")
+        self.current_spooky.play(loops=-1)  # loop infinitely
 
     def stop_spooky_background(self):
-        """Stop the spooky melody after the song is done."""
-        self.sounds["spooky_melody"].stop()
-        print("Stopped spooky melody")
+        """Stop the currently playing spooky melody."""
+        if hasattr(self, "current_spooky"):
+            self.current_spooky.stop()
+            print("Stopped spooky melody")
 
     def update_gui(self):
         """Updates tempo and visuals."""
