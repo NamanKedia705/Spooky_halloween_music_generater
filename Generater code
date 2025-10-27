@@ -3,7 +3,10 @@ import pygame_gui
 import random
 import threading
 import time
-
+import os
+import tempfile
+from audiocraft.models import MusicGen
+import torch
 # --- Constants ---
 WINDOW_WIDTH = 800
 WINDOW_HEIGHT = 600
@@ -38,7 +41,13 @@ class SequencerApp:
         self.tempo_bpm = 120
         self.halloween_playing = False
         self.stop_halloween_event = threading.Event()
-
+        self.ai_playing = False
+        self.stop_ai_event = threading.Event()
+        self.current_ai_sound = None
+        # Load MusicGen model once
+        self.musicgen_model = MusicGen.get_pretrained('facebook/musicgen-medium')
+        self.musicgen_model.set_generation_params(duration=16)
+        self.musicgen_model.to(torch.device("cpu"))  # force CPU if no GPU
         # Create GUI elements
         self.create_gui_elements()
         self.load_sounds()
@@ -134,6 +143,14 @@ class SequencerApp:
             text="Randomize Beat",
             manager=self.manager
         )
+        
+        # Generate AI Track button
+        generate_button_rect = pygame.Rect(420, 450, 220, 40)
+        self.generate_ai_button = pygame_gui.elements.UIButton(
+            relative_rect=generate_button_rect,
+            text="Generate AI Spooky Track",
+            manager=self.manager
+        )
 
     def load_sounds(self):
         """Loads sound effects into memory."""
@@ -180,14 +197,26 @@ class SequencerApp:
                     self.stop_playback()
                     self.convert_to_halloween_song()
                 elif event.ui_element == self.stop_halloween_button:
-                    # Stop the Halloween track
-                    print("Stopping Halloween track...")
-                    self.stop_halloween_event.set()     # signal to stop the Halloween thread
-                    self.stop_spooky_background()       # stop spooky melody
+                    print("Stopping any AI or Halloween track...")
+                    self.stop_halloween_event.set()
+                    self.stop_ai_event.set()
+                    if self.current_ai_sound:
+                        self.current_ai_sound.stop()
+                        self.current_ai_sound = None
+                    self.stop_spooky_background()
                     self.halloween_playing = False
+                    self.ai_playing = False
                     self.current_step = -1
                 elif event.ui_element == self.randomize_button:
                     self.randomize_beat()
+                elif event.ui_element == self.generate_ai_button:
+                    # Stop any other tracks first
+                    if self.halloween_playing:
+                        self.stop_halloween_event.set()
+                        self.halloween_playing = False
+                    self.stop_playback()
+                    # Launch AI track generation in a separate thread
+                    threading.Thread(target=self.play_ai_track_from_pattern, daemon=True).start()
 
     def start_playback(self):
         """Starts the audio playback loop in a separate thread."""
@@ -312,7 +341,73 @@ class SequencerApp:
                     button.colours['hovered_bg'] = color
                     button.colours['active_bg'] = color
                     button.rebuild()
-    
+    def describe_pattern(self):
+        """Generate a text description of the beat pattern to guide AI generation."""
+        total_steps = len(self.beat_matrix[0]) * len(self.beat_matrix)
+        hits = sum(sum(row) for row in self.beat_matrix)
+        density = hits / total_steps
+
+        # Decide mood from how dense the beat is
+        if density < 0.25:
+            mood = "slow and eerie"
+        elif density < 0.6:
+            mood = "steady and suspenseful"
+        else:
+            mood = "intense and chaotic"
+        # Describe which instruments are active
+        active_instruments = [name for i, name in enumerate(self.instrument_names) if any(self.beat_matrix[i])]
+        instruments_desc = ", ".join(active_instruments) if active_instruments else "no percussion"
+        description = f"A {mood} spooky melody at {self.tempo_bpm} BPM, matching {instruments_desc} rhythm."
+        return description
+    def play_ai_track_from_pattern(self):
+        """Generate a spooky track using MusicGen and play it in real-time."""
+        description = self.describe_pattern()
+        self.ai_playing = True
+        self.stop_ai_event.clear()
+
+        try:
+            print("Generating AI spooky track with MusicGen...")
+            
+            # Generate audio tensor
+            wav = self.musicgen_model.generate([description])
+            wav = wav.cpu().numpy()[0]  # convert tensor to numpy array
+
+            # Save to a temporary WAV file
+            import soundfile as sf
+            tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+            sf.write(tmp_file.name, wav, samplerate=32000)  # MusicGen default is 32 kHz
+            tmp_file.close()
+
+            # Play using pygame
+            self.current_ai_sound = pygame.mixer.Sound(tmp_file.name)
+            self.current_ai_sound.play(loops=-1)
+            print("AI track playing...")
+
+            # Overlay drum pattern for same number of bars
+            total_steps = 8
+            bars = 16
+            for _ in range(bars):
+                if self.stop_ai_event.is_set():
+                    break
+                for step in range(total_steps):
+                    if self.stop_ai_event.is_set():
+                        break
+                    for i in range(3):
+                        if self.beat_matrix[i][step]:
+                            self.instrument_sounds[i].play()
+                    if self.stop_ai_event.wait(timeout=60.0 / self.tempo_bpm / 2):
+                        break
+
+            # Stop AI track
+            self.current_ai_sound.stop()
+            self.ai_playing = False
+            self.current_ai_sound = None
+            print("AI spooky track stopped.")
+
+        except Exception as e:
+            print("Error generating AI track:", e)
+            self.ai_playing = False
+
 def main():
     """Main function to run the application."""
     pygame.init()
